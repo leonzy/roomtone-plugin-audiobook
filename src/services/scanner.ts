@@ -1,6 +1,6 @@
 // 本地有声书扫描器：从 pluginDataDir 下的某个目录扫描书籍/章节文件
 
-import type { Book, Chapter } from '../types';
+import type { Book, Chapter } from "../types";
 import {
   isAudioFile,
   isImageFile,
@@ -9,7 +9,7 @@ import {
   stripExt,
   safeId,
   estimateDurationFromSize,
-} from '../utils/helpers';
+} from "../utils/helpers";
 
 export interface ScannerState {
   scannedAt?: number;
@@ -17,30 +17,43 @@ export interface ScannerState {
   chaptersByBookId: Record<string, Chapter[]>;
 }
 
-export const DEFAULT_LIBRARY_PATH = '/app/audiobook';
+export const DEFAULT_LIBRARY_PATH = "/app/audiobook";
 
 const MAX_SCAN_DEPTH = 6;
 
 type FileStat = { size: number; modTime: number };
-type DirEntry = { name: string; isDir: boolean; size?: number; modTime?: number };
+type DirEntry = {
+  name: string;
+  isDir: boolean;
+  size?: number;
+  modTime?: number;
+};
 
 async function readEntries(path: string): Promise<DirEntry[]> {
+  await yieldScan();
   return (songloft.fs.readdir as any)(path, { withStats: true });
 }
 
-function entryStats(entries: DirEntry[], path: string): Record<string, FileStat> {
- const stats: Record<string, FileStat> = {};
- for (const e of entries) {
-  if (!e.isDir && typeof e.size === "number" && typeof e.modTime === "number") {
-   stats[`${path}/${e.name}`] = {size:e.size, modTime:e.modTime};
+function entryStats(
+  entries: DirEntry[],
+  path: string,
+): Record<string, FileStat> {
+  const stats: Record<string, FileStat> = {};
+  for (const e of entries) {
+    if (
+      !e.isDir &&
+      typeof e.size === "number" &&
+      typeof e.modTime === "number"
+    ) {
+      stats[`${path}/${e.name}`] = { size: e.size, modTime: e.modTime };
+    }
   }
- }
- return stats;
+  return stats;
 }
 
 // Give HTTP requests and other plugins time between background scan batches.
 async function yieldScan(): Promise<void> {
- await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  await new Promise<void>((resolve) => setTimeout(resolve, 20));
 }
 
 interface WalkResult {
@@ -57,7 +70,7 @@ interface WalkResult {
 async function walkDir(
   dirPath: string,
   depth: number,
-  maxDepth: number
+  maxDepth: number,
 ): Promise<WalkResult> {
   const audios: string[] = [];
   let coverRel: string | null = null;
@@ -87,8 +100,8 @@ async function walkDir(
       }
       if (!coverRel && isImageFile(e.name)) {
         const lower = e.name.toLowerCase();
-        const base = lower.substring(0, lower.lastIndexOf('.'));
-        if (base === 'cover' || base === 'folder' || base === '封面') {
+        const base = lower.substring(0, lower.lastIndexOf("."));
+        if (base === "cover" || base === "folder" || base === "封面") {
           coverRel = fullPath;
         }
       }
@@ -110,7 +123,9 @@ export async function scanLibrary(): Promise<ScannerState> {
   try {
     entries = (await readEntries(libraryPath)) || [];
   } catch (err) {
-    songloft.log.warn(`有声书库路径不存在或无法访问: ${libraryPath} (${String(err)})`);
+    songloft.log.warn(
+      `有声书库路径不存在或无法访问: ${libraryPath} (${String(err)})`,
+    );
     throw err;
   }
 
@@ -148,7 +163,11 @@ export async function scanLibrary(): Promise<ScannerState> {
   // 根目录散落的音频文件 → 合并到一本"未分类"书籍
   if (rootAudios.length > 0) {
     try {
-      const result = await buildMiscBook(libraryPath, rootAudios, entryStats(entries, libraryPath));
+      const result = await buildMiscBook(
+        libraryPath,
+        rootAudios,
+        entryStats(entries, libraryPath),
+      );
       if (result && result.chapters.length > 0) {
         state.books.push(result.book);
         state.chaptersByBookId[result.book.id] = result.chapters;
@@ -168,7 +187,7 @@ export async function scanLibrary(): Promise<ScannerState> {
 
 async function scanBookFolder(
   libraryPath: string,
-  folder: string
+  folder: string,
 ): Promise<{ book: Book; chapters: Chapter[] } | null> {
   const folderRel = `${libraryPath}/${folder}`;
 
@@ -186,16 +205,16 @@ async function scanBookFolder(
     if (i > 0 && i % 64 === 0) await yieldScan();
     const rel = result.audios[i];
     try {
-      const st = result.stats[rel] || await songloft.fs.stat(rel);
+      const st = result.stats[rel] || (await songloft.fs.stat(rel));
       const size = Number(st.size || 0);
       const mod = Number(st.modTime || 0);
       if (mod > latestMod) latestMod = mod;
       totalSize += size;
 
-      const fileName = rel.substring(rel.lastIndexOf('/') + 1);
+      const fileName = rel.substring(rel.lastIndexOf("/") + 1);
 
       chapters.push({
-        id: `${safeId(folder)}-ch${String(i + 1).padStart(3, '0')}`,
+        id: `${safeId(folder)}-ch${String(i + 1).padStart(3, "0")}`,
         index: i + 1,
         title: stripExt(fileName),
         duration: estimateDurationFromSize(size),
@@ -228,11 +247,11 @@ async function scanBookFolder(
     }
   }
 
-  let description = '';
-  let category = '默认';
+  let description = "";
+  let category = "默认";
   let tags: string[] = [];
-  let author = '未知';
-  let coverRatio = '';
+  let author = "未知";
+  let coverRatio = "";
 
   // 优先读取 metadata.json
   try {
@@ -251,9 +270,9 @@ async function scanBookFolder(
 
   if (!description && descRel) {
     try {
-      description = ((await songloft.fs.readFile(descRel)) || '').trim();
+      description = ((await songloft.fs.readFile(descRel)) || "").trim();
     } catch {
-      description = '';
+      description = "";
     }
   }
 
@@ -278,7 +297,7 @@ async function scanBookFolder(
 async function buildMiscBook(
   libraryPath: string,
   audios: string[],
-  stats: Record<string, FileStat>
+  stats: Record<string, FileStat>,
 ): Promise<{ book: Book; chapters: Chapter[] } | null> {
   if (audios.length === 0) return null;
   naturalSort(audios);
@@ -291,13 +310,13 @@ async function buildMiscBook(
     if (i > 0 && i % 64 === 0) await yieldScan();
     const rel = `${libraryPath}/${audios[i]}`;
     try {
-      const st = stats[rel] || await songloft.fs.stat(rel);
+      const st = stats[rel] || (await songloft.fs.stat(rel));
       const size = Number(st.size || 0);
       const mod = Number(st.modTime || 0);
       if (mod > latestMod) latestMod = mod;
       totalSize += size;
       chapters.push({
-        id: `misc-ch${String(i + 1).padStart(3, '0')}`,
+        id: `misc-ch${String(i + 1).padStart(3, "0")}`,
         index: i + 1,
         title: stripExt(audios[i]),
         duration: estimateDurationFromSize(size),
@@ -313,13 +332,13 @@ async function buildMiscBook(
   if (chapters.length === 0) return null;
 
   const book: Book = {
-    id: 'misc-audio',
-    title: '未分类音频',
-    author: '未知',
+    id: "misc-audio",
+    title: "未分类音频",
+    author: "未知",
     coverUrl: null,
-    coverRatio: '',
-    description: '有声书库根目录下的零散音频文件',
-    category: '未分类',
+    coverRatio: "",
+    description: "有声书库根目录下的零散音频文件",
+    category: "未分类",
     tags: [],
     updatedAt: latestMod || Date.now(),
     chapterCount: chapters.length,
@@ -332,11 +351,14 @@ async function buildMiscBook(
 
 // ---------- 索引持久化 ----------
 
-const STORAGE_KEY = 'audiobook_library_v1';
+const STORAGE_KEY = "audiobook_library_v1";
 
 export async function saveLibraryIndex(state: ScannerState): Promise<void> {
   try {
-    await songloft.storage.set(STORAGE_KEY, state as unknown as Record<string, unknown>);
+    await songloft.storage.set(
+      STORAGE_KEY,
+      state as unknown as Record<string, unknown>,
+    );
   } catch (err) {
     songloft.log.warn(`saveLibraryIndex 失败: ${String(err)}`);
   }
@@ -353,7 +375,10 @@ export async function loadLibraryIndex(): Promise<ScannerState | null> {
 }
 
 /** 辅助：根据 bookId 从 state 中获取 BookDetail */
-export function getBookDetail(state: ScannerState, bookId: string): (Book & { chapters: Chapter[] }) | null {
+export function getBookDetail(
+  state: ScannerState,
+  bookId: string,
+): (Book & { chapters: Chapter[] }) | null {
   const book = state.books.find((b) => b.id === bookId);
   if (!book) return null;
   const chapters = state.chaptersByBookId[bookId] || [];

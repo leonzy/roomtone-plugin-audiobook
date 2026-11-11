@@ -1,16 +1,23 @@
 // 书籍管理器：封装扫描、查询、进度、收藏等功能
 
-import type { Book, BookDetail, Chapter, BookMetadata, PluginSettings, ChapterProgress } from '../types';
+import type {
+  Book,
+  BookDetail,
+  Chapter,
+  BookMetadata,
+  PluginSettings,
+  ChapterProgress,
+} from "../types";
 import {
   scanLibrary,
   saveLibraryIndex,
   loadLibraryIndex,
   getBookDetail,
   DEFAULT_LIBRARY_PATH,
-} from './scanner';
+} from "./scanner";
 
-const STORAGE_KEY_SETTINGS = 'audiobook_settings_v1';
-const STORAGE_KEY_PROGRESS = 'audiobook_progress_v1';
+const STORAGE_KEY_SETTINGS = "audiobook_settings_v1";
+const STORAGE_KEY_PROGRESS = "audiobook_progress_v1";
 const INDEX_MAX_AGE_MS = 60 * 60 * 1000;
 
 type BookWithChapters = Book & { chapters: Chapter[] };
@@ -44,9 +51,12 @@ export class BookManager {
     // 1) 加载设置
     try {
       const raw = await songloft.storage.get(STORAGE_KEY_SETTINGS);
-      if (raw && typeof raw === 'object') {
-        this.settings = { ...this.settings, ...(raw as Partial<PluginSettings>) };
-      } else if (typeof raw === 'string') {
+      if (raw && typeof raw === "object") {
+        this.settings = {
+          ...this.settings,
+          ...(raw as Partial<PluginSettings>),
+        };
+      } else if (typeof raw === "string") {
         this.settings = { ...this.settings, ...JSON.parse(raw) };
       }
     } catch {
@@ -56,9 +66,9 @@ export class BookManager {
     // 2) 加载播放进度
     try {
       const raw = await songloft.storage.get(STORAGE_KEY_PROGRESS);
-      if (raw && typeof raw === 'object') {
+      if (raw && typeof raw === "object") {
         this.progress = raw as Record<string, ChapterProgress>;
-      } else if (typeof raw === 'string') {
+      } else if (typeof raw === "string") {
         this.progress = JSON.parse(raw) || {};
       }
     } catch {
@@ -96,7 +106,9 @@ export class BookManager {
       this.chaptersByBookId = state.chaptersByBookId;
       this.scannedAt = Date.now();
       await saveLibraryIndex(state);
-      songloft.log.info(`有声书插件：后台扫描完成，共 ${this.books.length} 本书`);
+      songloft.log.info(
+        `有声书插件：后台扫描完成，共 ${this.books.length} 本书`,
+      );
     } catch (err) {
       songloft.log.warn(`有声书插件：后台扫描失败: ${String(err)}`);
     } finally {
@@ -112,12 +124,12 @@ export class BookManager {
     keyword?: string;
     category?: string;
     favoritesOnly?: boolean;
-    sortBy?: 'updatedAt' | 'title' | 'chapterCount';
+    sortBy?: "updatedAt" | "title" | "chapterCount";
   }): { total: number; books: Book[]; page: number; pageSize: number } {
     const page = Math.max(1, options.page || 1);
     const pageSize = Math.min(100, Math.max(1, options.pageSize || 24));
-    const keyword = (options.keyword || '').trim().toLowerCase();
-    const category = (options.category || '').trim();
+    const keyword = (options.keyword || "").trim().toLowerCase();
+    const category = (options.category || "").trim();
 
     let list = this.books.slice();
 
@@ -127,7 +139,7 @@ export class BookManager {
           b.title.toLowerCase().includes(keyword) ||
           b.author.toLowerCase().includes(keyword) ||
           b.description.toLowerCase().includes(keyword) ||
-          (b.tags || []).some((t) => t.toLowerCase().includes(keyword))
+          (b.tags || []).some((t) => t.toLowerCase().includes(keyword)),
       );
     }
     if (category) {
@@ -138,9 +150,11 @@ export class BookManager {
       list = list.filter((b) => favSet.has(b.id));
     }
 
-    const sortBy = options.sortBy || 'updatedAt';
-    if (sortBy === 'title') list.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
-    else if (sortBy === 'chapterCount') list.sort((a, b) => b.chapterCount - a.chapterCount);
+    const sortBy = options.sortBy || "updatedAt";
+    if (sortBy === "title")
+      list.sort((a, b) => a.title.localeCompare(b.title, "zh-CN"));
+    else if (sortBy === "chapterCount")
+      list.sort((a, b) => b.chapterCount - a.chapterCount);
     else list.sort((a, b) => b.updatedAt - a.updatedAt);
 
     const total = list.length;
@@ -159,7 +173,7 @@ export class BookManager {
         books: this.books,
         chaptersByBookId: this.chaptersByBookId,
       },
-      bookId
+      bookId,
     );
   }
 
@@ -171,7 +185,7 @@ export class BookManager {
 
   getCategories(): string[] {
     const set = new Set<string>();
-    set.add('全部');
+    set.add("全部");
     for (const b of this.books) set.add(b.category);
     return Array.from(set);
   }
@@ -182,7 +196,12 @@ export class BookManager {
     return Array.from(set);
   }
 
-  getSnapshot(): StateSnapshot & { recentlyPlayed: PluginSettings['recentlyPlayed']; settings: PluginSettings; scanning: boolean; version: string } {
+  getSnapshot(): StateSnapshot & {
+    recentlyPlayed: PluginSettings["recentlyPlayed"];
+    settings: PluginSettings;
+    scanning: boolean;
+    version: string;
+  } {
     return {
       books: this.books,
       totalBooks: this.books.length,
@@ -196,7 +215,7 @@ export class BookManager {
     };
   }
 
-  getRecentlyPlayed(): PluginSettings['recentlyPlayed'] {
+  getRecentlyPlayed(): PluginSettings["recentlyPlayed"] {
     return this.settings.recentlyPlayed.slice(0, 20);
   }
 
@@ -228,7 +247,7 @@ export class BookManager {
     chapterId: string,
     position: number,
     duration: number,
-    completed?: boolean
+    completed?: boolean,
   ): Promise<ChapterProgress> {
     const key = `${bookId}::${chapterId}`;
     const p: ChapterProgress = {
@@ -241,7 +260,7 @@ export class BookManager {
     try {
       await songloft.storage.set(
         STORAGE_KEY_PROGRESS,
-        this.progress as unknown as Record<string, unknown>
+        this.progress as unknown as Record<string, unknown>,
       );
     } catch (err) {
       songloft.log.warn(`保存播放进度失败: ${String(err)}`);
@@ -252,7 +271,7 @@ export class BookManager {
 
   async addRecentlyPlayed(bookId: string, chapterId: string): Promise<void> {
     const list = this.settings.recentlyPlayed.filter(
-      (x) => x.bookId !== bookId
+      (x) => x.bookId !== bookId,
     );
     list.unshift({ bookId, chapterId, at: Date.now() });
     this.settings.recentlyPlayed = list.slice(0, 30);
@@ -265,7 +284,7 @@ export class BookManager {
     try {
       await songloft.storage.set(
         STORAGE_KEY_SETTINGS,
-        this.settings as unknown as Record<string, unknown>
+        this.settings as unknown as Record<string, unknown>,
       );
     } catch (err) {
       songloft.log.warn(`保存 plugin 设置失败: ${String(err)}`);
@@ -308,9 +327,12 @@ export class BookManager {
     return !!this.settings.webhookEnabled;
   }
 
-  async setWebhookEnabled(enabled: boolean, serverHost?: string): Promise<void> {
+  async setWebhookEnabled(
+    enabled: boolean,
+    serverHost?: string,
+  ): Promise<void> {
     this.settings.webhookEnabled = enabled;
-    if (typeof serverHost === 'string' && serverHost.trim()) {
+    if (typeof serverHost === "string" && serverHost.trim()) {
       this.settings.serverHost = serverHost.trim();
     }
     await this.saveSettings();
@@ -338,8 +360,9 @@ export class BookManager {
   }
 
   private generateToken(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let result = '';
+    const chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let result = "";
     for (let i = 0; i < 32; i++) {
       result += chars.charAt(Math.floor(Math.random() * chars.length));
     }
@@ -350,7 +373,7 @@ export class BookManager {
 
   async updateMetadata(bookId: string, data: BookMetadata): Promise<void> {
     const book = this.books.find((b) => b.id === bookId);
-    if (!book) throw new Error('书籍不存在');
+    if (!book) throw new Error("书籍不存在");
 
     const metaRel = `${book.folderRelPath}/metadata.json`;
     let existing: BookMetadata = {};
@@ -376,14 +399,14 @@ export class BookManager {
 
   async updateCover(bookId: string, base64: string): Promise<string | null> {
     const book = this.books.find((b) => b.id === bookId);
-    if (!book) throw new Error('书籍不存在');
+    if (!book) throw new Error("书籍不存在");
 
     const coverRel = `${book.folderRelPath}/cover.jpg`;
-    await songloft.fs.writeFile(coverRel, base64, { encoding: 'base64' });
+    await songloft.fs.writeFile(coverRel, base64, { encoding: "base64" });
 
     book.coverUrl = coverRel;
 
-    const mime = 'image/jpeg';
+    const mime = "image/jpeg";
     return `data:${mime};base64,${base64}`;
   }
 }
