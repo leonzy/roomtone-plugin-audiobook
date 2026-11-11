@@ -11,6 +11,7 @@ import {
 
 const STORAGE_KEY_SETTINGS = 'audiobook_settings_v1';
 const STORAGE_KEY_PROGRESS = 'audiobook_progress_v1';
+const INDEX_MAX_AGE_MS = 60 * 60 * 1000;
 
 type BookWithChapters = Book & { chapters: Chapter[] };
 
@@ -64,12 +65,16 @@ export class BookManager {
       // ignore
     }
 
+    let cachedFresh = false;
     // 3) 从缓存加载（立即就绪，不阻塞）
     try {
       const cached = await loadLibraryIndex();
-      if (cached && cached.books && cached.books.length > 0) {
+      if (cached && cached.books && cached.chaptersByBookId) {
         this.books = cached.books;
         this.chaptersByBookId = cached.chaptersByBookId || {};
+        this.scannedAt = cached.scannedAt || 0;
+        const age = Date.now() - this.scannedAt;
+        cachedFresh = this.scannedAt > 0 && age >= 0 && age < INDEX_MAX_AGE_MS;
         songloft.log.info(`有声书插件：从缓存加载 ${this.books.length} 本书`);
       }
     } catch {
@@ -77,7 +82,7 @@ export class BookManager {
     }
 
     // 4) 后台扫描（网络文件系统如 WebDAV 可能较慢，不阻塞初始化）
-    this.scanInBackground();
+    if (!cachedFresh) this.scanInBackground();
   }
 
   private async scanInBackground(): Promise<void> {
@@ -274,6 +279,7 @@ export class BookManager {
   }
 
   async rescan(): Promise<void> {
+    if (this.scanning) return;
     ++this.generation;
     this.scanning = true;
     const gen = this.generation;

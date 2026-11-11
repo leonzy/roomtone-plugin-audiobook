@@ -169,3 +169,10 @@ sequenceDiagram
 ## License
 
 Apache-2.0
+
+
+## Roomtone 扫描优化 / Scan optimization
+
+启动优先使用一小时内成功保存的索引，过期时在后台刷新；“重新扫描”始终可以手动刷新。扫描请求合并，挂载不可用时保留原索引。支持 Roomtone 的 `fs.readdir(path, {withStats:true})` 批量读取文件大小及修改时间，旧宿主自动回退逐文件 stat；扫描按小批让出执行时间，不修改音频文件。
+
+Startup reuses a successfully saved index for one hour and refreshes expired indexes in the background. Manual rescan remains available; concurrent scans are coalesced and an unavailable mount does not overwrite the last index. Roomtone batches size/mtime through optional `fs.readdir(path, {withStats:true})`, with per-file stat fallback on older hosts. Small scan batches yield cooperatively; audio files are unchanged.

@@ -5,13 +5,14 @@ import {
   isAudioFile,
   isImageFile,
   isDescFile,
-  naturalCompare,
+  naturalSort,
   stripExt,
   safeId,
   estimateDurationFromSize,
 } from '../utils/helpers';
 
-interface ScannerState {
+export interface ScannerState {
+  scannedAt?: number;
   books: Book[];
   chaptersByBookId: Record<string, Chapter[]>;
 }
@@ -20,7 +21,30 @@ export const DEFAULT_LIBRARY_PATH = '/app/audiobook';
 
 const MAX_SCAN_DEPTH = 6;
 
+type FileStat = { size: number; modTime: number };
+type DirEntry = { name: string; isDir: boolean; size?: number; modTime?: number };
+
+async function readEntries(path: string): Promise<DirEntry[]> {
+  return (songloft.fs.readdir as any)(path, { withStats: true });
+}
+
+function entryStats(entries: DirEntry[], path: string): Record<string, FileStat> {
+ const stats: Record<string, FileStat> = {};
+ for (const e of entries) {
+  if (!e.isDir && typeof e.size === "number" && typeof e.modTime === "number") {
+   stats[`${path}/${e.name}`] = {size:e.size, modTime:e.modTime};
+  }
+ }
+ return stats;
+}
+
+// Give HTTP requests and other plugins time between background scan batches.
+async function yieldScan(): Promise<void> {
+ await new Promise<void>((resolve) => setTimeout(resolve, 20));
+}
+
 interface WalkResult {
+  stats: Record<string, FileStat>;
   audios: string[];
   coverRel: string | null;
   descRel: string | null;
@@ -39,24 +63,21 @@ async function walkDir(
   let coverRel: string | null = null;
   let descRel: string | null = null;
 
-  let entries: Array<{ name: string; isDir: boolean }> = [];
+  let entries: DirEntry[] = [];
   try {
-    entries = (await songloft.fs.readdir(dirPath)) || [];
+    entries = (await readEntries(dirPath)) || [];
   } catch {
-    return { audios, coverRel, descRel };
+    return { audios, coverRel, descRel, stats: {} };
   }
 
+  const stats = entryStats(entries, dirPath);
   for (const e of entries) {
     const fullPath = `${dirPath}/${e.name}`;
     if (e.isDir) {
       if (depth < maxDepth) {
-        try {
-          await songloft.fs.stat(fullPath);
-        } catch {
-          continue;
-        }
         const sub = await walkDir(fullPath, depth + 1, maxDepth);
         audios.push(...sub.audios);
+        Object.assign(stats, sub.stats);
         if (!coverRel && sub.coverRel) coverRel = sub.coverRel;
         if (!descRel && sub.descRel) descRel = sub.descRel;
       }
@@ -77,7 +98,7 @@ async function walkDir(
     }
   }
 
-  return { audios, coverRel, descRel };
+  return { audios, coverRel, descRel, stats };
 }
 
 /** 扫描整个库目录并返回索引 */
@@ -85,16 +106,17 @@ export async function scanLibrary(): Promise<ScannerState> {
   const libraryPath = DEFAULT_LIBRARY_PATH;
   const state: ScannerState = { books: [], chaptersByBookId: {} };
 
-  let entries: Array<{ name: string; isDir: boolean }> = [];
+  let entries: DirEntry[] = [];
   try {
-    entries = (await songloft.fs.readdir(libraryPath)) || [];
+    entries = (await readEntries(libraryPath)) || [];
   } catch (err) {
     songloft.log.warn(`有声书库路径不存在或无法访问: ${libraryPath} (${String(err)})`);
-    return state;
+    throw err;
   }
 
   if (entries.length === 0) {
     songloft.log.info(`有声书库为空: ${libraryPath}`);
+    state.scannedAt = Date.now();
     return state;
   }
 
@@ -111,6 +133,7 @@ export async function scanLibrary(): Promise<ScannerState> {
 
   // 扫描每个子目录为一本书
   for (const folder of folders) {
+    await yieldScan();
     try {
       const result = await scanBookFolder(libraryPath, folder);
       if (result && result.chapters.length > 0) {
@@ -125,7 +148,7 @@ export async function scanLibrary(): Promise<ScannerState> {
   // 根目录散落的音频文件 → 合并到一本"未分类"书籍
   if (rootAudios.length > 0) {
     try {
-      const result = await buildMiscBook(libraryPath, rootAudios);
+      const result = await buildMiscBook(libraryPath, rootAudios, entryStats(entries, libraryPath));
       if (result && result.chapters.length > 0) {
         state.books.push(result.book);
         state.chaptersByBookId[result.book.id] = result.chapters;
@@ -139,6 +162,7 @@ export async function scanLibrary(): Promise<ScannerState> {
   state.books.sort((a, b) => b.updatedAt - a.updatedAt);
 
   songloft.log.info(`有声书扫描完成：共 ${state.books.length} 本书`);
+  state.scannedAt = Date.now();
   return state;
 }
 
@@ -148,26 +172,21 @@ async function scanBookFolder(
 ): Promise<{ book: Book; chapters: Chapter[] } | null> {
   const folderRel = `${libraryPath}/${folder}`;
 
-  try {
-    await songloft.fs.stat(folderRel);
-  } catch {
-    return null;
-  }
-
   const result = await walkDir(folderRel, 0, MAX_SCAN_DEPTH);
 
   if (result.audios.length === 0) return null;
 
-  result.audios.sort((a, b) => naturalCompare(a, b));
+  naturalSort(result.audios);
 
   const chapters: Chapter[] = [];
   let latestMod = 0;
   let totalSize = 0;
 
   for (let i = 0; i < result.audios.length; i++) {
+    if (i > 0 && i % 64 === 0) await yieldScan();
     const rel = result.audios[i];
     try {
-      const st = await songloft.fs.stat(rel);
+      const st = result.stats[rel] || await songloft.fs.stat(rel);
       const size = Number(st.size || 0);
       const mod = Number(st.modTime || 0);
       if (mod > latestMod) latestMod = mod;
@@ -258,19 +277,21 @@ async function scanBookFolder(
 
 async function buildMiscBook(
   libraryPath: string,
-  audios: string[]
+  audios: string[],
+  stats: Record<string, FileStat>
 ): Promise<{ book: Book; chapters: Chapter[] } | null> {
   if (audios.length === 0) return null;
-  audios.sort((a, b) => naturalCompare(a, b));
+  naturalSort(audios);
 
   const chapters: Chapter[] = [];
   let latestMod = 0;
   let totalSize = 0;
 
   for (let i = 0; i < audios.length; i++) {
+    if (i > 0 && i % 64 === 0) await yieldScan();
     const rel = `${libraryPath}/${audios[i]}`;
     try {
-      const st = await songloft.fs.stat(rel);
+      const st = stats[rel] || await songloft.fs.stat(rel);
       const size = Number(st.size || 0);
       const mod = Number(st.modTime || 0);
       if (mod > latestMod) latestMod = mod;

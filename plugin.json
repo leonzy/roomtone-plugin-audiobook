@@ -1,10 +1,10 @@
 {
   "$schema": "https://raw.githubusercontent.com/songloft-org/plugin-toolchain/main/schemas/plugin.schema.json",
   "name": "有声书",
-  "version": "1.1.3",
+  "version": "1.1.4-roomtone.1",
   "description": "本地有声书管理与播放：扫描本地有声书目录，提供分类展示、搜索、章节播放、播放进度与收藏功能。",
   "author": "MiMusic Team",
-  "homepage": "https://github.com/mimusic-org/mimusic-jsplugin-releases/tree/audiobook",
+  "homepage": "https://github.com/leonzy/roomtone-plugin-audiobook",
   "license": "Apache-2.0",
   "icon": "icon.svg",
   "entryPath": "audiobook",
@@ -23,8 +23,8 @@
     "fs:external",
     "command"
   ],
-  "updateUrl": "https://raw.githubusercontent.com/mimusic-org/mimusic-jsplugin-releases/audiobook/plugin.json",
-  "download_url": "https://github.com/mimusic-org/mimusic-jsplugin-releases/releases/download/audiobook-v1.1.3/audiobook.jsplugin.zip",
+  "updateUrl": "https://raw.githubusercontent.com/leonzy/roomtone-plugin-audiobook/main/plugin.json",
+  "download_url": "https://github.com/leonzy/roomtone-plugin-audiobook/releases/download/v1.1.4-roomtone.1/audiobook.jsplugin.zip",
   "entryHash": "2aedec173f965bc63c951fe56a1da6529de04318d5ccfdd73a6ac4beb827b5dd",
   "zipHash": "b7c9771140e40ac345d69c134e07a10666f6b2593e3e4f62f6d1cad1c4661588"
 }

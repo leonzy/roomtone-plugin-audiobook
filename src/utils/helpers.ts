@@ -37,31 +37,34 @@ export function errorResponse(message: string, statusCode = 400): HTTPResponse {
 }
 
 /** 自然排序（"1" < "2" < "10"） */
+function naturalKey(value: string): Array<string | number> {
+ const chunks = value.match(/\d+|\D+/g) || [];
+ return chunks.map((chunk) => /^\d/.test(chunk) ? parseInt(chunk, 10) : chunk.toLowerCase());
+}
+
+function compareNaturalKeys(ax: Array<string | number>, bx: Array<string | number>): number {
+ const len = Math.min(ax.length, bx.length);
+ for (let i = 0; i < len; i++) {
+  const av = ax[i], bv = bx[i];
+  if (typeof av === 'number' && typeof bv === 'number') {
+   if (av !== bv) return av - bv;
+  } else {
+   const a = String(av), b = String(bv);
+   if (a !== b) return a < b ? -1 : 1;
+  }
+ }
+ return ax.length - bx.length;
+}
+
 export function naturalCompare(a: string, b: string): number {
-  const ax: Array<string | number> = [];
-  const bx: Array<string | number> = [];
-  const re = /(\d+)|(\D+)/g;
-  let ma: RegExpExecArray | null;
-  while ((ma = re.exec(a)) !== null) {
-    ax.push(ma[1] ? parseInt(ma[1], 10) : ma[2].toLowerCase());
-  }
-  let mb: RegExpExecArray | null;
-  while ((mb = re.exec(b)) !== null) {
-    bx.push(mb[1] ? parseInt(mb[1], 10) : mb[2].toLowerCase());
-  }
-  const len = Math.min(ax.length, bx.length);
-  for (let i = 0; i < len; i++) {
-    const av = ax[i];
-    const bv = bx[i];
-    if (typeof av === 'number' && typeof bv === 'number') {
-      if (av !== bv) return av - bv;
-    } else {
-      const as = String(av);
-      const bs = String(bv);
-      if (as !== bs) return as < bs ? -1 : 1;
-    }
-  }
-  return ax.length - bx.length;
+ return compareNaturalKeys(naturalKey(a), naturalKey(b));
+}
+
+// Tokenize each long path once, rather than on every O(n log n) comparison.
+export function naturalSort(values: string[]): void {
+ const keyed = values.map(value => ({value, key:naturalKey(value)}));
+ keyed.sort((a,b) => compareNaturalKeys(a.key,b.key));
+ for (let i=0;i<values.length;i++) values[i]=keyed[i].value;
 }
 
 /** 从文件名提取扩展名（小写，带点） */
