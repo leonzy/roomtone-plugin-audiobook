@@ -176,3 +176,13 @@ Apache-2.0
 启动优先使用一小时内成功保存的索引，过期时在后台刷新；“重新扫描”始终可以手动刷新。扫描请求合并，挂载不可用时保留原索引。支持 Roomtone 的 `fs.readdir(path, {withStats:true})` 批量读取文件大小及修改时间，旧宿主自动回退逐文件 stat；扫描按小批让出执行时间，不修改音频文件。
 
 Startup reuses a successfully saved index for one hour and refreshes expired indexes in the background. Manual rescan remains available; concurrent scans are coalesced and an unavailable mount does not overwrite the last index. Roomtone batches size/mtime through optional `fs.readdir(path, {withStats:true})`, with per-file stat fallback on older hosts. Small scan batches yield cooperatively; audio files are unchanged.
+
+## Roomtone 增量扫描 / Incremental scanning
+
+启动缓存过期或手动扫描时，递归核对文件名、类型、大小、修改时间的完整清单；未变化的书籍复用索引，不再排序和重建所有章节。不会读取音频正文计算哈希。清单持久化，重启后仍可复用；目录或元数据读取失败时保留旧索引，且不接受不完整的检查点。旧版缓存先逐文件核对，再迁移到检查点。扫描仍需要轻量遍历，以发现父目录时间未改变的文件原地修改。
+
+After startup cache expiry or a manual scan, the scanner compares exact recursive metadata manifests (name, type, size and modification time). Unchanged books reuse their indexes without sorting and rebuilding chapters. Audio payloads are never hashed. Persisted manifests survive restarts; failed directory/metadata reads preserve existing books without accepting incomplete checkpoints. Legacy caches are validated file by file before migration. Lightweight traversal remains necessary to detect in-place edits that do not change the parent directory timestamp.
+
+跳过 NAS 缩略图、回收站及缓存目录：`@eaDir`、`@Recycle`、`#recycle`、`.cache`、`.snapshot`、`.AppleDouble`、`@tmp`。
+
+NAS thumbnail, recycle and cache directories listed above are excluded from traversal and checkpoints.

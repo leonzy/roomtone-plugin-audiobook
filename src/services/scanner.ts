@@ -13,6 +13,8 @@ import {
 
 export interface ScannerState {
   scannedAt?: number;
+  // Exact metadata manifests avoid hash collisions and never read audio payloads.
+  directoryManifests?: Record<string, string>;
   books: Book[];
   chaptersByBookId: Record<string, Chapter[]>;
 }
@@ -20,6 +22,19 @@ export interface ScannerState {
 export const DEFAULT_LIBRARY_PATH = "/app/audiobook";
 
 const MAX_SCAN_DEPTH = 6;
+const IGNORED_DIRECTORIES = new Set([
+  "@eaDir",
+  "@Recycle",
+  "#recycle",
+  ".cache",
+  ".snapshot",
+  ".AppleDouble",
+  "@tmp",
+]);
+
+function isLibraryEntry(entry: DirEntry): boolean {
+  return !entry.isDir || !IGNORED_DIRECTORIES.has(entry.name);
+}
 
 type FileStat = { size: number; modTime: number };
 type DirEntry = {
@@ -61,6 +76,9 @@ interface WalkResult {
   audios: string[];
   coverRel: string | null;
   descRel: string | null;
+  manifests: string[];
+  complete: boolean;
+  rootEntries?: DirEntry[];
 }
 
 /**
@@ -71,57 +89,78 @@ async function walkDir(
   dirPath: string,
   depth: number,
   maxDepth: number,
+  result: WalkResult = {
+    audios: [],
+    stats: {},
+    coverRel: null,
+    descRel: null,
+    manifests: [],
+    complete: true,
+  },
 ): Promise<WalkResult> {
-  const audios: string[] = [];
-  let coverRel: string | null = null;
-  let descRel: string | null = null;
-
   let entries: DirEntry[] = [];
   try {
-    entries = (await readEntries(dirPath)) || [];
+    entries = ((await readEntries(dirPath)) || []).filter(isLibraryEntry);
   } catch {
-    return { audios, coverRel, descRel, stats: {} };
+    throw new Error(`无法读取目录: ${dirPath}`);
   }
-
-  const stats = entryStats(entries, dirPath);
+  if (depth === 0) result.rootEntries = entries;
+  const canonical = entries.map((e) => [e.name, e.isDir, e.size, e.modTime]);
+  canonical.sort((a, b) =>
+    String(a[0]) < String(b[0]) ? -1 : String(a[0]) > String(b[0]) ? 1 : 0,
+  );
+  result.manifests.push(JSON.stringify([dirPath, canonical]));
+  for (const e of entries) {
+    if (
+      !e.isDir &&
+      (typeof e.size !== "number" || typeof e.modTime !== "number")
+    )
+      result.complete = false;
+  }
   for (const e of entries) {
     const fullPath = `${dirPath}/${e.name}`;
     if (e.isDir) {
       if (depth < maxDepth) {
-        const sub = await walkDir(fullPath, depth + 1, maxDepth);
-        audios.push(...sub.audios);
-        Object.assign(stats, sub.stats);
-        if (!coverRel && sub.coverRel) coverRel = sub.coverRel;
-        if (!descRel && sub.descRel) descRel = sub.descRel;
+        await walkDir(fullPath, depth + 1, maxDepth, result);
       }
     } else {
       if (isAudioFile(e.name)) {
-        audios.push(fullPath);
+        result.audios.push(fullPath);
+        if (typeof e.size === "number" && typeof e.modTime === "number")
+          result.stats[fullPath] = { size: e.size, modTime: e.modTime };
       }
-      if (!coverRel && isImageFile(e.name)) {
+      if (!result.coverRel && isImageFile(e.name)) {
         const lower = e.name.toLowerCase();
         const base = lower.substring(0, lower.lastIndexOf("."));
         if (base === "cover" || base === "folder" || base === "封面") {
-          coverRel = fullPath;
+          result.coverRel = fullPath;
         }
       }
-      if (!descRel && isDescFile(e.name)) {
-        descRel = fullPath;
+      if (!result.descRel && isDescFile(e.name)) {
+        result.descRel = fullPath;
       }
     }
   }
 
-  return { audios, coverRel, descRel, stats };
+  return result;
 }
 
 /** 扫描整个库目录并返回索引 */
-export async function scanLibrary(): Promise<ScannerState> {
+export async function scanLibrary(
+  previous?: ScannerState,
+): Promise<ScannerState> {
   const libraryPath = DEFAULT_LIBRARY_PATH;
-  const state: ScannerState = { books: [], chaptersByBookId: {} };
+  const state: ScannerState = {
+    books: [],
+    chaptersByBookId: {},
+    directoryManifests: {},
+  };
+  const cached = previous || (await loadLibraryIndex());
+  let reused = 0;
 
   let entries: DirEntry[] = [];
   try {
-    entries = (await readEntries(libraryPath)) || [];
+    entries = ((await readEntries(libraryPath)) || []).filter(isLibraryEntry);
   } catch (err) {
     songloft.log.warn(
       `有声书库路径不存在或无法访问: ${libraryPath} (${String(err)})`,
@@ -150,13 +189,33 @@ export async function scanLibrary(): Promise<ScannerState> {
   for (const folder of folders) {
     await yieldScan();
     try {
-      const result = await scanBookFolder(libraryPath, folder);
+      const oldBook = cached?.books.find(
+        (book) => book.folderRelPath === `${libraryPath}/${folder}`,
+      );
+      const oldChapters = oldBook && cached.chaptersByBookId[oldBook.id];
+      const result = await scanBookFolder(
+        libraryPath,
+        folder,
+        oldBook,
+        oldChapters,
+        cached?.directoryManifests?.[folder],
+      );
       if (result && result.chapters.length > 0) {
         state.books.push(result.book);
         state.chaptersByBookId[result.book.id] = result.chapters;
+        if (result.manifest) state.directoryManifests[folder] = result.manifest;
+        if (result.reused) reused++;
       }
     } catch (err) {
       songloft.log.warn(`扫描文件夹 '${folder}' 失败: ${String(err)}`);
+      const oldBook = cached?.books.find(
+        (book) => book.folderRelPath === `${libraryPath}/${folder}`,
+      );
+      if (oldBook) {
+        state.books.push(oldBook);
+        state.chaptersByBookId[oldBook.id] =
+          cached.chaptersByBookId[oldBook.id] || [];
+      }
     }
   }
 
@@ -180,7 +239,9 @@ export async function scanLibrary(): Promise<ScannerState> {
   // 按最近更新时间排序
   state.books.sort((a, b) => b.updatedAt - a.updatedAt);
 
-  songloft.log.info(`有声书扫描完成：共 ${state.books.length} 本书`);
+  songloft.log.info(
+    `有声书扫描完成：共 ${state.books.length} 本书，复用 ${reused} 本未变化索引`,
+  );
   state.scannedAt = Date.now();
   return state;
 }
@@ -188,20 +249,61 @@ export async function scanLibrary(): Promise<ScannerState> {
 async function scanBookFolder(
   libraryPath: string,
   folder: string,
-): Promise<{ book: Book; chapters: Chapter[] } | null> {
+  oldBook?: Book,
+  oldChapters?: Chapter[],
+  oldManifest?: string,
+): Promise<{
+  book: Book;
+  chapters: Chapter[];
+  manifest?: string;
+  reused?: boolean;
+} | null> {
   const folderRel = `${libraryPath}/${folder}`;
 
   const result = await walkDir(folderRel, 0, MAX_SCAN_DEPTH);
+  // Include the scanner version and all descendant entries, not just parent mtime.
+  const manifest = result.complete
+    ? JSON.stringify([2, ...result.manifests.sort()])
+    : undefined;
+  if (
+    manifest &&
+    manifest === oldManifest &&
+    oldBook &&
+    oldChapters &&
+    oldChapters.length === result.audios.length
+  ) {
+    return { book: oldBook, chapters: oldChapters, manifest, reused: true };
+  }
 
   if (result.audios.length === 0) return null;
 
-  naturalSort(result.audios);
+  // Bootstrap old caches by validating every audio path, size and timestamp.
+  const oldPaths = new Set(oldChapters?.map((chapter) => chapter.fileRelPath));
+  const sameAudio =
+    oldChapters &&
+    oldChapters.length === result.audios.length &&
+    oldPaths.size === result.audios.length &&
+    result.audios.every((path) => oldPaths.has(path)) &&
+    oldChapters.every((chapter) => {
+      const st = result.stats[chapter.fileRelPath];
+      return (
+        st && st.size === chapter.fileSize && st.modTime === chapter.modTime
+      );
+    });
+  if (!sameAudio) naturalSort(result.audios);
 
-  const chapters: Chapter[] = [];
+  const chapters: Chapter[] = sameAudio ? oldChapters : [];
   let latestMod = 0;
   let totalSize = 0;
+  const bookId = safeId(folder);
 
-  for (let i = 0; i < result.audios.length; i++) {
+  if (sameAudio) {
+    for (const chapter of chapters) {
+      latestMod = Math.max(latestMod, chapter.modTime || 0);
+      totalSize += chapter.fileSize || 0;
+    }
+  }
+  for (let i = 0; !sameAudio && i < result.audios.length; i++) {
     if (i > 0 && i % 64 === 0) await yieldScan();
     const rel = result.audios[i];
     try {
@@ -214,7 +316,7 @@ async function scanBookFolder(
       const fileName = rel.substring(rel.lastIndexOf("/") + 1);
 
       chapters.push({
-        id: `${safeId(folder)}-ch${String(i + 1).padStart(3, "0")}`,
+        id: `${bookId}-ch${String(i + 1).padStart(3, "0")}`,
         index: i + 1,
         title: stripExt(fileName),
         duration: estimateDurationFromSize(size),
@@ -223,7 +325,7 @@ async function scanBookFolder(
         modTime: mod,
       });
     } catch (err) {
-      songloft.log.warn(`stat 失败: ${rel} (${String(err)})`);
+      throw new Error(`stat 失败: ${rel} (${String(err)})`);
     }
   }
 
@@ -235,7 +337,7 @@ async function scanBookFolder(
   // 如果在子目录中未找到命名封面，尝试根目录的任何图片
   if (!coverRel) {
     try {
-      const rootEntries = (await songloft.fs.readdir(folderRel)) || [];
+      const rootEntries = result.rootEntries || [];
       for (const e of rootEntries) {
         if (!e.isDir && isImageFile(e.name)) {
           coverRel = `${folderRel}/${e.name}`;
@@ -264,20 +366,26 @@ async function scanBookFolder(
       if (meta.author) author = meta.author;
       if (meta.coverRatio) coverRatio = meta.coverRatio;
     }
-  } catch {
-    // metadata.json 不存在或解析失败，走旧逻辑
+  } catch (err) {
+    if (
+      result.rootEntries?.some(
+        (entry) => entry.name === "metadata.json" && !entry.isDir,
+      )
+    ) {
+      throw new Error(`无法读取书籍元数据: ${String(err)}`);
+    }
   }
 
   if (!description && descRel) {
     try {
       description = ((await songloft.fs.readFile(descRel)) || "").trim();
-    } catch {
-      description = "";
+    } catch (err) {
+      throw new Error(`无法读取书籍描述: ${String(err)}`);
     }
   }
 
   const book: Book = {
-    id: safeId(folder),
+    id: bookId,
     title: folder,
     author,
     coverUrl: coverRel,
@@ -291,7 +399,12 @@ async function scanBookFolder(
     folderRelPath: folderRel,
   };
 
-  return { book, chapters };
+  return {
+    book,
+    chapters: sameAudio ? oldChapters : chapters,
+    manifest,
+    reused: !!sameAudio,
+  };
 }
 
 async function buildMiscBook(

@@ -34,6 +34,7 @@ export class BookManager {
   private books: Book[] = [];
   private chaptersByBookId: Record<string, Chapter[]> = {};
   private scannedAt = 0;
+  private directoryManifests: Record<string, string> = {};
   private settings: PluginSettings = {
     favorites: [],
     recentlyPlayed: [],
@@ -83,6 +84,7 @@ export class BookManager {
         this.books = cached.books;
         this.chaptersByBookId = cached.chaptersByBookId || {};
         this.scannedAt = cached.scannedAt || 0;
+        this.directoryManifests = cached.directoryManifests || {};
         const age = Date.now() - this.scannedAt;
         cachedFresh = this.scannedAt > 0 && age >= 0 && age < INDEX_MAX_AGE_MS;
         songloft.log.info(`有声书插件：从缓存加载 ${this.books.length} 本书`);
@@ -100,10 +102,15 @@ export class BookManager {
     this.scanning = true;
     const gen = ++this.generation;
     try {
-      const state = await scanLibrary();
+      const state = await scanLibrary({
+        books: this.books,
+        chaptersByBookId: this.chaptersByBookId,
+        directoryManifests: this.directoryManifests,
+      });
       if (gen !== this.generation) return;
       this.books = state.books;
       this.chaptersByBookId = state.chaptersByBookId;
+      this.directoryManifests = state.directoryManifests || {};
       this.scannedAt = Date.now();
       await saveLibraryIndex(state);
       songloft.log.info(
@@ -303,10 +310,15 @@ export class BookManager {
     this.scanning = true;
     const gen = this.generation;
     try {
-      const state = await scanLibrary();
+      const state = await scanLibrary({
+        books: this.books,
+        chaptersByBookId: this.chaptersByBookId,
+        directoryManifests: this.directoryManifests,
+      });
       if (gen !== this.generation) return;
       this.books = state.books;
       this.chaptersByBookId = state.chaptersByBookId;
+      this.directoryManifests = state.directoryManifests || {};
       this.scannedAt = Date.now();
       await saveLibraryIndex(state);
       songloft.log.info(`重新扫描完成：${this.books.length} 本书`);
